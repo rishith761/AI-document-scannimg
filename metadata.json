@@ -1,0 +1,8 @@
+{
+  "name": "Remix TruthLens",
+  "description": "Clean, simple identity document screening tool with 5-layer fraud detection, OCR field extraction, and facial verification.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
