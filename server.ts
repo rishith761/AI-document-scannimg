@@ -715,7 +715,24 @@ Compare the face in this live selfie against the facial portrait in the submitte
       (normExpected === "PAN" && (normDetected === "Passport" || normDetected === "Aadhaar" || bufferKeywords.isPassport || bufferKeywords.isAadhaar)) ||
       (normExpected === "Voter ID" && (normDetected === "Passport" || normDetected === "Aadhaar" || normDetected === "PAN"));
 
-    if (isExplicitMismatch && !isMatch) {
+    // Determine if the detected document is a recognized ID document
+    const isNonID = normDetected.toLowerCase().includes("non-id") || 
+                    normDetected.toLowerCase().includes("other") || 
+                    normDetected.toLowerCase().includes("invalid") ||
+                    normDetected.toLowerCase().includes("screenshot") ||
+                    normDetected.toLowerCase().includes("receipt");
+
+    if (isNonID && !bufferKeywords.isAadhaar && !bufferKeywords.isPassport && !bufferKeywords.isPan && !bufferKeywords.isVoter) {
+      parsedData.documentTypeMismatch = true;
+      parsedData.expectedDocumentType = cleanExpectedDocType;
+      parsedData.detectedDocumentType = "Non-ID / Invalid Image";
+      parsedData.verdict = "FAKE";
+      parsedData.trustScore = Math.min(parsedData.trustScore || 8, 12);
+      parsedData.humanReviewRequired = true;
+      parsedData.verdictSummary = `Invalid Specimen: The uploaded image does not appear to be an official government identity document. Expected ${cleanExpectedDocType}.`;
+      if (!parsedData.riskFlags) parsedData.riskFlags = [];
+      parsedData.riskFlags.unshift("Image content is not a recognized government identity document");
+    } else if (isExplicitMismatch && !isMatch) {
       const finalDetectedType = normDetected && normDetected !== normExpected
         ? normDetected
         : (cleanExpectedDocType === "Passport" ? "Aadhaar" : "Other");
@@ -724,7 +741,7 @@ Compare the face in this live selfie against the facial portrait in the submitte
       parsedData.expectedDocumentType = cleanExpectedDocType;
       parsedData.detectedDocumentType = finalDetectedType;
       parsedData.verdict = "FAKE";
-      parsedData.trustScore = 15;
+      parsedData.trustScore = Math.min(parsedData.trustScore || 15, 20);
       parsedData.humanReviewRequired = true;
       parsedData.verdictSummary = `Document Category Mismatch: You selected ${cleanExpectedDocType}, but the uploaded file was identified as an ${finalDetectedType} card.`;
 
@@ -744,64 +761,32 @@ Compare the face in this live selfie against the facial portrait in the submitte
         }
       }
     } else if (isMatch) {
-      // MATCH! E.g. Aadhaar in Aadhaar!
+      // Document matches expected category
       parsedData.documentTypeMismatch = false;
       parsedData.expectedDocumentType = cleanExpectedDocType;
       parsedData.detectedDocumentType = cleanExpectedDocType;
 
-      // If no explicit digital tampering in image, it should be verified with 98!
-      const isTampered = parsedData.elaHeatmap?.tamperDetected && 
-        (parsedData.riskFlags?.some((f: string) => f.toLowerCase().includes("tamper") || f.toLowerCase().includes("splice") || f.toLowerCase().includes("photoshop")));
+      // Check for tampering or fraud indications from the model or keyword analysis
+      const hasTamperRisk = (parsedData.riskFlags && parsedData.riskFlags.length > 0) ||
+        parsedData.verdict === "FAKE" ||
+        parsedData.verdict === "SUSPECT" ||
+        (parsedData.trustScore && parsedData.trustScore < 75) ||
+        parsedData.elaHeatmap?.tamperDetected ||
+        (parsedData.layerResults && parsedData.layerResults.some((l: any) => l.status === "fail"));
 
-      if (!isTampered) {
-        parsedData.trustScore = 98;
+      if (hasTamperRisk) {
+        // Respect the model's tamper findings
+        if (!parsedData.verdict || parsedData.verdict === "LEGIT") {
+          parsedData.verdict = parsedData.trustScore && parsedData.trustScore < 50 ? "FAKE" : "SUSPECT";
+        }
+        parsedData.humanReviewRequired = true;
+      } else {
+        // Clean authentic match
         parsedData.verdict = "LEGIT";
+        parsedData.trustScore = Math.max(parsedData.trustScore || 95, 96);
         parsedData.humanReviewRequired = false;
         parsedData.verdictSummary = `Verified Authentic: Official ${cleanExpectedDocType} card authenticated across all 5 verification layers.`;
         parsedData.riskFlags = [];
-
-        parsedData.layerResults = [
-          {
-            id: "layer-1",
-            layerNumber: "Layer 1",
-            name: "Forensic Noise & Error Level Analysis",
-            score: 99,
-            status: "pass",
-            description: "Uniform error level compression profile without splicing artifacts.",
-          },
-          {
-            id: "layer-2",
-            layerNumber: "Layer 2",
-            name: "Template & Security Pattern Matching",
-            score: 98,
-            status: "pass",
-            description: `Security emblems and microprint conform to authentic ${cleanExpectedDocType} guidelines.`,
-          },
-          {
-            id: "layer-3",
-            layerNumber: "Layer 3",
-            name: "Typography & OCR Consistency",
-            score: 97,
-            status: "pass",
-            description: "Character spacing, font weights, and field alignments match standard specification.",
-          },
-          {
-            id: "layer-4",
-            layerNumber: "Layer 4",
-            name: "Facial Biometrics & Portrait Integrity",
-            score: 98,
-            status: "pass",
-            description: "Biometric photo geometry and lighting are genuine.",
-          },
-          {
-            id: "layer-5",
-            layerNumber: "Layer 5",
-            name: "Barcode, QR & Checksum Validation",
-            score: 99,
-            status: "pass",
-            description: "Cryptographic hash and printed demographic data match with 100% parity.",
-          },
-        ];
       }
     }
 
